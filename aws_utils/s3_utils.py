@@ -78,20 +78,36 @@ class MultiprocessingS3Interface(object):
         self._v = verbosity
         self.bucket_name = self.dst_dpath = self.src_dpath = None
         self.in_bucket = None
+        self.pool_size = pool_size
 
-    def init_interface(self, bucket_name, src_dpath, dst_dpath):
+    def __repr__(self):
+        s = self.__class__.__name__
+        s += ' of size {}'.format(self.pool_size)
+        s += ' connected to bucket {}'.format(self.bucket_name)
+        return s
+
+    def init_interface(self, src_dpath, dst_dpath):
         """ Initializes the bucket name, source and destination dpaths, and a
             list of items in the bucket for copy and move functions later
         """
+        bucket_name, src_dpath, dst_dpath, direction = self._parse_src_dst(
+            src_dpath,
+            dst_dpath
+        )
         self.bucket_name = bucket_name
         self.dst_dpath = dst_dpath
         self.src_dpath = src_dpath
+        self.direction = direction
         s3 = boto3.resource('s3')
         files_in_bucket = list(map(
             lambda x: x.key,
             s3.Bucket(bucket_name).objects.all()
         ))
         self.in_bucket = {k: True for k in files_in_bucket}
+        if direction == 'down':
+            self.src_fnames = [fp for fp in files_in_bucket if fp.startswith(src_dpath)]
+        elif direction == 'up':
+            self.src_fnames = ls_r(os.path.expandvars(os.path.expanduser(src_dpath)))
 
     def cp(self, src, dst, fnames=None):
         """ Copy function which infers the bucket name and direction. If fnames
@@ -103,30 +119,34 @@ class MultiprocessingS3Interface(object):
                 >>> self.cp("~/src/directory", "bucket_name:src/directory",
                 ...         fnames=["file_1", "file_2", "file_3"])
         """
-        bucket_name, src, dst, direction = self._parse_src_dst(src, dst)
-        self.init_interface(bucket_name, src, dst)
+        import ipdb
+        ipdb.set_trace()
+        if self._v:
+            print("Initializing internal bucket interface...")
+        self.init_interface(src, dst)
+
         if fnames is None:
-            fnames = ls_r(os.path.expandvars(os.path.expanduser(src)))
+            fnames = self.src_fnames
         print_head_tail(fnames, self._v)
 
-        if direction == 'up':
+        if self.direction == 'up':
             if self._v:
                 print("Uploading {} files from {} to {}:{}".format(
-                    len(fpaths),
+                    len(fnames),
                     self.src_dpath,
                     self.bucket_name,
                     self.dst_dpath), flush=True
                 )
             self.pool.map(self._cp_to_bucket, fnames)
-        elif direction == 'down':
-            self.poolmap(self._cp_from_bucket, fnames)
+        elif self.direction == 'down':
             if self._v:
                 print("Downloading {} files from {}:{} to {}".format(
-                    len(fpaths),
+                    len(fnames),
                     self.bucket_name,
                     self.src_dpath,
                     self.dst_dpath), flush=True
                 )
+            self.pool.map(self._cp_from_bucket, fnames)
         else:
             raise NotImplementedError("No support for cross-bucket transfers yet")
 
@@ -193,12 +213,12 @@ def ls_r(directory):
     return all_files
 
 
-def print_head_tail(self, iterable, n=5):
+def print_head_tail(iterable, n=5):
     if n > 0:
         # Diagnostic
         print("Found {} files.\nFirst {}:".format(len(iterable), n), flush=True)
         print(*iterable[:n], sep='\n', flush=True)
-        print("\nLast {}:".format(n_files_to_show), flush=True)
+        print("\nLast {}:".format(n), flush=True)
         print(*iterable[-n:], sep='\n', flush=True)
 
 
