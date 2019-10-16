@@ -4,36 +4,6 @@ import argparse
 
 import boto3
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--bucket_name',
-                    help='S3 Bucket Name',
-                    action='store',
-                    default='oscar-datasets',
-                    )
-parser.add_argument('--dpath_src',
-                    help='Data path containing files you want to move/copy',
-                    action='store',
-                    default='.',
-                    )
-parser.add_argument('--dpath_dst',
-                    help='Prefix for files in bucket',
-                    action='store',
-                    default=None,
-                    )
-parser.add_argument('--cp',
-                    help='Copy flag',
-                    action='store_true',
-                    )
-parser.add_argument('--mv',
-                    help='Move flag',
-                    action='store_true',
-                    )
-parser.add_argument('--nproc',
-                    help='Number of processes to use',
-                    action='store',
-                    default=1,
-                    )
-
 
 def urljoin(*args):
     """ Join urls, since os.path.join doesn't work with urls
@@ -105,6 +75,35 @@ if __name__ == '__main__':
     """
         python to_s3.py --bucket_name=oscar-datasets --dpath_src=$HOME/data/Moments_in_Time_256x256_30fps --cp --nproc=7
     """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--bucket_name',
+                        help='S3 Bucket Name',
+                        action='store',
+                        default='oscar-datasets',
+                        )
+    parser.add_argument('--dpath_src',
+                        help='Data path containing files you want to move/copy',
+                        action='store',
+                        default='.',
+                        )
+    parser.add_argument('--dpath_dst',
+                        help='Prefix for files in bucket',
+                        action='store',
+                        default=None,
+                        )
+    parser.add_argument('--cp',
+                        help='Copy flag',
+                        action='store_true',
+                        )
+    parser.add_argument('--mv',
+                        help='Move flag',
+                        action='store_true',
+                        )
+    parser.add_argument('--nproc',
+                        help='Number of processes to use',
+                        action='store',
+                        default=1,
+                        )
     args = parser.parse_args()
 
     # Default to local datapath's lowest-level folder if destination is not given
