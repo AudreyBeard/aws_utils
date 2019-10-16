@@ -42,18 +42,28 @@ class PoolFunctions(object):
         """ Opens connection to desired s3 instance and uploads files
         """
 
-        # Upload local file to same path in bucket if not already there
-        subpath = fname_src.split(self.dpath_src)[-1]
-        if subpath.startswith(os.sep):
-            subpath = subpath[1:]
-        fname_dst = os.path.join(self.dpath_dst,
-                                 subpath)
+        # Upload local file to same path in bucket
+        fname_dst = create_dst_fpath(fname_src, self.dpath_src, self.dpath_dst)
 
         # Only copy if not in bucket already
         if not self.in_bucket.get(fname_dst):
             s3_client = boto3.client('s3')
             s3_client.upload_file(fname_src, self.bucket_name, fname_dst)
         return self.in_bucket.get(fname_dst)
+
+    def cp_from_bucket(self, fname_src):
+        """ Opens connection to desired s3 instance and downloads files
+        """
+
+        # Upload local file to same path in bucket
+        fname_dst = create_dst_fpath(fname_src, self.dpath_src, self.dpath_dst)
+
+        # Only copy if not in bucket already
+        file_exists = os.path.exists(fname_dst)
+        if not file_exists:
+            s3_client = boto3.client('s3')
+            s3_client.download_file(self.bucket_name, fname_src, fname_dst)
+        return file_exists
 
     def mv_to_bucket(self, filename):
         """ Copies and deletes
@@ -62,13 +72,134 @@ class PoolFunctions(object):
         os.remove(filename)
 
 
+class MultiprocessingS3Interface(object):
+    def __init__(self, pool_size=1, verbosity=0):
+        self.pool = mp.Pool(pool_size)
+        self._v = verbosity
+        self.bucket_name = self.dst_dpath = self.src_dpath = None
+        self.in_bucket = None
+
+    def init_interface(self, bucket_name, src_dpath, dst_dpath):
+        """ Initializes the bucket name, source and destination dpaths, and a
+            list of items in the bucket for copy and move functions later
+        """
+        self.bucket_name = bucket_name
+        self.dst_dpath = dst_dpath
+        self.src_dpath = src_dpath
+        s3 = boto3.resource('s3')
+        files_in_bucket = list(map(
+            lambda x: x.key,
+            s3.Bucket(bucket_name).objects.all()
+        ))
+        self.in_bucket = {k: True for k in files_in_bucket}
+
+    def cp(self, src, dst, fnames=None):
+        """ Copy function which infers the bucket name and direction. If fnames
+            is given, only transfers those files. If not, will transfer all files
+            in src to dst.
+            Example:
+                >>> self = MultiProcessingS3Interface(4):
+                >>> self.cp("bucket_name:src/directory", "~/dst/directory")
+                >>> self.cp("~/src/directory", "bucket_name:src/directory",
+                ...         fnames=["file_1", "file_2", "file_3"])
+        """
+        bucket_name, src, dst, direction = self._parse_src_dst(src, dst)
+        self.init_interface(bucket_name, src, dst)
+        if fnames is None:
+            fnames = ls_r(os.path.expandvars(os.path.expanduser(src)))
+        print_head_tail(fnames, self._v)
+
+        if direction == 'up':
+            if self._v:
+                print("Uploading {} files from {} to {}:{}".format(
+                    len(fpaths),
+                    self.src_dpath,
+                    self.bucket_name,
+                    self.dst_dpath), flush=True
+                )
+            self.pool.map(self._cp_to_bucket, fnames)
+        elif direction == 'down':
+            self.poolmap(self._cp_from_bucket, fnames)
+            if self._v:
+                print("Downloading {} files from {}:{} to {}".format(
+                    len(fpaths),
+                    self.bucket_name,
+                    self.src_dpath,
+                    self.dst_dpath), flush=True
+                )
+        else:
+            raise NotImplementedError("No support for cross-bucket transfers yet")
+
+        if self._v:
+            print("Done copying")
+
+    def _cp_to_bucket(self, src_fname):
+        """ Copying function to be mapped in the pool (bucket -> local)
+            Assumes self.bucket, self.src_dpath, self.dst_dpath, and
+            self.in_bucket are all set
+        """
+        dst_fpath = create_dst_fpath(src_fname, self.src_dpath, self.dst_dpath)
+        file_exists = self.in_bucket.get(dst_fpath)
+        if not file_exists:
+            s3_client = boto3.client('s3')
+            s3_client.upload_file(src_fname, self.bucket_name, dst_fpath)
+        return file_exists
+
+    def _cp_from_bucket(self, src_fname):
+        """ Copying function to be mapped in the pool (local -> bucket)
+            Assumes self.bucket, self.src_dpath, and self.dst_dpath are all set
+        """
+        # Upload local file to same path in bucket
+        dst_fpath = create_dst_fpath(src_fname, self.src_dpath, self.dst_dpath)
+
+        # Only copy if not in bucket already
+        file_exists = os.path.exists(dst_fpath)
+        if not file_exists:
+            s3_client = boto3.client('s3')
+            s3_client.download_file(self.bucket_name, src_fname, dst_fpath)
+        return file_exists
+
+    def _parse_src_dst(self, src, dst):
+        """ Parses bucket name, source dpath, destination dpath, and direction
+            of flow from src and dst arguments
+        """
+        try:
+            bucket_name, src = src.split(':')
+            direction = 'down'
+        except ValueError:
+            try:
+                bucket_name, dst = dst.split(':')
+                direction = 'up'
+            except ValueError:
+                raise ValueError("Either src or dst must specify bucket name")
+        return bucket_name, src, dst, direction
+
+
+def create_dst_fpath(src_fname, src_dpath, dst_dpath):
+    """ Infers a destination filepath given the source filename and directory
+        path, and the destination directory path
+    """
+    subpath = src_fname.split(src_dpath)[-1]
+    subpath = subpath[1:] if subpath.startswith(os.sep) else subpath
+    return os.path.join(dst_dpath, subpath)
+
+
 def ls_r(directory):
-    """ Recursive list directory
+    """ Recursive list directory, maintaining full paths
     """
     all_files = []
     for root, _, fns in os.walk(directory):
         all_files.extend([os.path.join(root, fn) for fn in fns])
     return all_files
+
+
+def print_head_tail(self, iterable, n=5):
+    if n > 0:
+        # Diagnostic
+        print("Found {} files.\nFirst {}:".format(len(iterable), n), flush=True)
+        print(*iterable[:n], sep='\n', flush=True)
+        print("\nLast {}:".format(n_files_to_show), flush=True)
+        print(*iterable[-n:], sep='\n', flush=True)
 
 
 if __name__ == '__main__':
