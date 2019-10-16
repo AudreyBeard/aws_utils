@@ -1,4 +1,9 @@
 # aws_utils
+
+##CURRENTLY BROKEN
+I'm working on this repo actively, and I need it for curret work. It's broken
+now, but I guarantee it will be fixed by tomorrow (2019-10-17(
+
 Utilities for working with AWS tools
 
 This repo contains functionality that's useful enough for me to want to wrap in
@@ -23,7 +28,5 @@ a nice Python API. Currently, it supports the following:
 
 ---
 ## TODO
-[ ] Copy _from_ S3 bucket
-[ ] Add to PyPI
-
-
+- [ ] Copy _from_ S3 bucket
+- [ ] Add to PyPI
