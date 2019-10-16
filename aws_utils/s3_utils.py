@@ -117,7 +117,7 @@ if __name__ == '__main__':
 
     # Get files in local datapath and construct full filepaths
     print("Finding files now...", flush=True)
-    fpaths = ls_r(os.path.expandvars(args.dpath_src))
+    fpaths = ls_r(os.path.expandvars(os.path.expanduser(args.dpath_src)))
 
     # Diagnostic
     n_files_to_show = 5
