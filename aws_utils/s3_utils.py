@@ -24,19 +24,32 @@ class PoolFunctions(object):
     """ Class defining functions for a thread pool to be used in copying/moving
         stuff to an S3 bucket
     """
-    def __init__(self, s3_bucket_name=None, dpath_dst=None, dpath_src=None):
+    def __init__(self, s3_bucket_name=None, dpath_dst=None, dpath_src=None, direction=None):
         self.bucket_name = s3_bucket_name
         self.dpath_dst = dpath_dst
         self.dpath_src = dpath_src
+        self.direction = direction
+        self.init_src_files()
 
-        # Create a lookup table of files already in bucket so we don't try to
-        # download them again
+    def init_src_files(self):
+        """ List files in src directory. If the transfer will be an upload, we
+            need to know what's in the bucket to avoid unnecessary copying
+        """
+
+        # Find files in the bucket
         s3 = boto3.resource('s3')
         files_in_bucket = list(map(
             lambda x: x.key,
-            s3.Bucket(s3_bucket_name).objects.all()
+            s3.Bucket(self.bucket_name).objects.all()
         ))
+
+        # Create a lookup table  so we don't try to download them again
         self.in_bucket = {k: True for k in files_in_bucket}
+
+        if self.direction == 'down':
+            self.src_fpaths = [fp for fp in files_in_bucket if fp.startswith(self.dpath_src)]
+        elif self.direction == 'up':
+            self.src_fpaths = ls_r(os.path.expandvars(os.path.expanduser(self.dpath_src)))
 
     def cp_to_bucket(self, fname_src):
         """ Opens connection to desired s3 instance and uploads files
@@ -61,6 +74,14 @@ class PoolFunctions(object):
         # Only copy if not in bucket already
         file_exists = os.path.exists(fname_dst)
         if not file_exists:
+
+            # Make intermediate directories as needed
+            try:
+                os.makedirs(os.path.split(fname_dst)[0])
+            except FileExistsError:
+                pass
+
+            # Do the actual copying
             s3_client = boto3.client('s3')
             s3_client.download_file(self.bucket_name, fname_src, fname_dst)
         return file_exists
@@ -73,10 +94,13 @@ class PoolFunctions(object):
 
 
 class MultiprocessingS3Interface(object):
+    """ Defines a simpler interface for coying to/from S3 buckets.
+        Creates a MP pool of a given size and can copy files to/from an S3
+        bucket using MP.Pool().map()
+    """
     def __init__(self, pool_size=1, verbosity=0):
         self.pool = mp.Pool(pool_size)
         self._v = verbosity
-        self.bucket_name = self.dst_dpath = self.src_dpath = None
         self.in_bucket = None
         self.pool_size = pool_size
 
@@ -94,90 +118,77 @@ class MultiprocessingS3Interface(object):
             src_dpath,
             dst_dpath
         )
-        self.bucket_name = bucket_name
-        self.dst_dpath = dst_dpath
-        self.src_dpath = src_dpath
-        self.direction = direction
-        s3 = boto3.resource('s3')
-        files_in_bucket = list(map(
-            lambda x: x.key,
-            s3.Bucket(bucket_name).objects.all()
-        ))
-        self.in_bucket = {k: True for k in files_in_bucket}
-        if direction == 'down':
-            self.src_fnames = [fp for fp in files_in_bucket if fp.startswith(src_dpath)]
-        elif direction == 'up':
-            self.src_fnames = ls_r(os.path.expandvars(os.path.expanduser(src_dpath)))
+
+        funcs = PoolFunctions(bucket_name, dst_dpath, src_dpath, direction)
+        return funcs
 
     def cp(self, src, dst, fnames=None):
         """ Copy function which infers the bucket name and direction. If fnames
             is given, only transfers those files. If not, will transfer all files
             in src to dst.
+            Parameters:
+                src (str): source directory path - if this is in a bucket,
+                    specify BUCKET_NAME:dpath
+                dst (str): destination directory path - if this is in a bucket,
+                    specify BUCKET_NAME:dpath
+                fnames (list of str | str): if list of strings, this is used as
+                    the path to files(excluding the prefix denoted by <src>. If
+                    <fnames> is a string, it is assumed to have a wildcard
+                    character, e.g. "*.jpg" or "file_number*.txt"
             Example:
                 >>> self = MultiProcessingS3Interface(4):
                 >>> self.cp("bucket_name:src/directory", "~/dst/directory")
                 >>> self.cp("~/src/directory", "bucket_name:src/directory",
                 ...         fnames=["file_1", "file_2", "file_3"])
+                >>> self.cp("~/src/directory", "bucket_name:src/directory",
+                ...         fnames='*.jpg')
+                >>> self.cp("bucket_name:src/directory", "~/dst/directory",
+                ...         fnames='cat*.gif')
         """
-        import ipdb
-        ipdb.set_trace()
         if self._v:
             print("Initializing internal bucket interface...")
-        self.init_interface(src, dst)
+        funcs = self.init_interface(src, dst)
 
         if fnames is None:
-            fnames = self.src_fnames
+            fnames = funcs.src_fpaths
+
+        # If fnames is a string with a wildcard character
+        # Can only check the filenames right now, not the paths
+        elif isinstance(fnames, str) and '*' in fnames:
+            tokens = fnames.split('*')
+            fnames = [
+                fp
+                for fp, fn in map(
+                    lambda x: (x, os.path.split(x)[-1]),
+                    funcs.src_fpaths
+                )
+                if fn.startswith(tokens[0]) and fn.endswith(tokens[1])
+            ]
         print_head_tail(fnames, self._v)
 
-        if self.direction == 'up':
+        if funcs.direction == 'up':
             if self._v:
                 print("Uploading {} files from {} to {}:{}".format(
                     len(fnames),
-                    self.src_dpath,
-                    self.bucket_name,
-                    self.dst_dpath), flush=True
+                    funcs.dpath_src,
+                    funcs.bucket_name,
+                    funcs.dpath_dst), flush=True
                 )
-            self.pool.map(self._cp_to_bucket, fnames)
-        elif self.direction == 'down':
+            self.pool.map(funcs.cp_to_bucket, fnames)
+        elif funcs.direction == 'down':
             if self._v:
                 print("Downloading {} files from {}:{} to {}".format(
                     len(fnames),
-                    self.bucket_name,
-                    self.src_dpath,
-                    self.dst_dpath), flush=True
+                    funcs.bucket_name,
+                    funcs.dpath_src,
+                    funcs.dpath_dst), flush=True
                 )
-            self.pool.map(self._cp_from_bucket, fnames)
+            self.pool.map(funcs.cp_from_bucket, fnames)
         else:
             raise NotImplementedError("No support for cross-bucket transfers yet")
 
         if self._v:
             print("Done copying")
-
-    def _cp_to_bucket(self, src_fname):
-        """ Copying function to be mapped in the pool (bucket -> local)
-            Assumes self.bucket, self.src_dpath, self.dst_dpath, and
-            self.in_bucket are all set
-        """
-        dst_fpath = create_dst_fpath(src_fname, self.src_dpath, self.dst_dpath)
-        file_exists = self.in_bucket.get(dst_fpath)
-        if not file_exists:
-            s3_client = boto3.client('s3')
-            s3_client.upload_file(src_fname, self.bucket_name, dst_fpath)
-        return file_exists
-
-    def _cp_from_bucket(self, src_fname):
-        """ Copying function to be mapped in the pool (local -> bucket)
-            Assumes self.bucket, self.src_dpath, and self.dst_dpath are all set
-        """
-        # Upload local file to same path in bucket
-        dst_fpath = create_dst_fpath(src_fname, self.src_dpath, self.dst_dpath)
-
-        # Only copy if not in bucket already
-        file_exists = os.path.exists(dst_fpath)
-        if not file_exists:
-            s3_client = boto3.client('s3')
-            s3_client.download_file(self.bucket_name, src_fname, dst_fpath)
-        return file_exists
 
     def _parse_src_dst(self, src, dst):
         """ Parses bucket name, source dpath, destination dpath, and direction
