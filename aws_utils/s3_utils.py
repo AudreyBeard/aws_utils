@@ -137,11 +137,18 @@ class MultiprocessingS3Interface(object):
                     character, e.g. "*.jpg" or "file_number*.txt"
             Example:
                 >>> self = MultiProcessingS3Interface(4):
+                >>> # Copy all files and directory structure from bucket to
+                >>> # local machine
                 >>> self.cp("bucket_name:src/directory", "~/dst/directory")
+                >>> # Copy three files from local machine to bucket
                 >>> self.cp("~/src/directory", "bucket_name:src/directory",
                 ...         fnames=["file_1", "file_2", "file_3"])
+                >>> # Copy all .jpgs and parent directory structures from local
+                >>> # machine to bucket
                 >>> self.cp("~/src/directory", "bucket_name:src/directory",
                 ...         fnames='*.jpg')
+                >>> # Copy all files that start with "cat" and end with ".gif"
+                >>> # and parent directory structures from bucket to local
                 >>> self.cp("bucket_name:src/directory", "~/dst/directory",
                 ...         fnames='cat*.gif')
         """
