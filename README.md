@@ -24,7 +24,27 @@ a nice Python API. Currently, it supports the following:
 *If you have already entered your credentials, you can skip that step*
 
 ---
+## Usage
+### From Python:
+```
+from aws_utils import S3Interface
+
+# How many processes do you want to use? I usually choose N - 1, where N is the
+# total number of cores my machine has (e.g. an machine with 8 cores means I
+# use pool_size = 7.
+# More processes means faster up/download, but may impact other processes
+# running on your system
+pool_size = 7
+interface = S3Interface(pool_size)
+
+# A few possible uses
+interface.cp("BUCKET_NAME:src_directory", "dst_directory", fnames="*.jpg")
+interface.cp("src_directory", "BUCKET_NAME:dst_directory", fnames="*.mov")
+interface.mv("BUCKET_NAME:src_directory", "dst_directory", fnames="invoice_*.txt")
+interface.mv("src_directory", "BUCKET_NAME:dst_directory")
+```
+
+---
 ## TODO
-- [x] Copy _from_ S3 bucket
 - [ ] Add to PyPI
 - [ ] Transfer from one S3 bucket to another
