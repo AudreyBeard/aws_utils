@@ -4,6 +4,8 @@ import argparse
 
 import boto3
 
+__all__ = ["MultiprocessingS3Interface", "ls_r"]
+
 
 def urljoin(*args):
     """ Join urls, since os.path.join doesn't work with urls
@@ -242,7 +244,7 @@ def print_head_tail(iterable, n=5):
 
 if __name__ == '__main__':
     """
-        python to_s3.py --bucket_name=oscar-datasets --dpath_src=$HOME/data/Moments_in_Time_256x256_30fps --cp --nproc=7
+        python s3_utils.py --bucket_name=oscar-datasets --dpath_src=$HOME/data/Moments_in_Time_256x256_30fps --cp --nproc=7
     """
     parser = argparse.ArgumentParser()
     parser.add_argument('--bucket_name',
